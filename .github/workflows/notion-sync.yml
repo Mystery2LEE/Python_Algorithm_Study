@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, master]
     paths:
-      - "week*/**/*.py"
+      - 'week*/**/*.py'
   # Actions 탭에서 버튼으로 직접 실행 (전체 재동기화용)
   workflow_dispatch:
 
@@ -13,15 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # 이전 커밋과 비교해야 하므로 전체 히스토리 필요
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install dependencies
         run: pip install requests
@@ -52,9 +52,11 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
+          # 접근 가능한 DB 목록을 먼저 출력 (문제 발생 시 원인 파악용)
+          python scripts/notion_sync.py --diagnose || true
+
           if [ ! -s changed_files.txt ]; then
             echo "동기화할 파일이 없습니다."
             exit 0
           fi
-          # 파일 목록을 그대로 스크립트에 전달 (셸 이스케이프 문제 회피)
           python scripts/notion_sync.py --from-file changed_files.txt

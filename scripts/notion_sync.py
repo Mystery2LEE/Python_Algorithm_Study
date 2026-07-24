@@ -1,12 +1,16 @@
 """
-푸시된 풀이 파일 하나를 읽어 Notion '문제 풀이 기록' DB에 기록한다.
+푸시된 풀이 파일을 읽어 Notion '문제 풀이 기록' DB에 기록한다.
 
 경로 규칙:  week01/이정현/BOJ_1000_A와B.py
             └주차┘ └풀이자┘ └플랫폼┘└번호┘└문제명┘
 
 파일 상단 docstring에서 메타데이터를 읽는다. 없으면 비워둔 채로 기록.
 
-사용:  python scripts/notion_sync.py week01/이정현/BOJ_1000_A와B.py
+DB는 NOTION_DATABASE_ID로 지정하거나, 비워두면 이름으로 자동 탐색한다.
+
+사용:
+    python scripts/notion_sync.py --from-file changed_files.txt
+    python scripts/notion_sync.py --diagnose        # 접근 가능한 DB 목록 출력
 """
 
 import os
@@ -16,177 +20,110 @@ from datetime import date
 
 import requests
 
-NOTION_TOKEN = os.environ["NOTION_TOKEN"]
-DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+TOKEN = os.environ.get("NOTION_TOKEN", "").strip()
+RAW_DB_ID = os.environ.get("NOTION_DATABASE_ID", "").strip().replace("-", "")
+DB_NAME_HINT = os.environ.get("NOTION_DATABASE_NAME", "문제 풀이 기록").strip()
 REPO = os.environ.get("REPO", "")
 SHA = os.environ.get("SHA", "main")
 
 API = "https://api.notion.com/v1"
-HEADERS = {
-    "Authorization": f"Bearer {NOTION_TOKEN}",
-    "Notion-Version": "2022-06-28",
-    "Content-Type": "application/json",
-}
+V_OLD = "2022-06-28"   # databases 엔드포인트
+V_NEW = "2025-09-03"   # data_sources 엔드포인트
 
-PLATFORM_MAP = {
-    "SWEA": "SWEA",
-    "PGS": "프로그래머스",
-    "PROGRAMMERS": "프로그래머스",
-    "BOJ": "백준",
-    "LC": "LeetCode",
-    "LEETCODE": "LeetCode",
-}
+if not TOKEN:
+    print("=" * 64)
+    print("❌ GitHub Secret NOTION_TOKEN 이 비어 있습니다.")
+    print("   레포 → Settings → Secrets and variables → Actions")
+    print("=" * 64)
+    sys.exit(1)
 
-VALID_DIFFICULTY = {"Lv1", "Lv2", "Lv3", "Lv4+"}
-VALID_TYPES = {
-    "구현", "완전탐색", "DFS/BFS", "이분탐색", "그리디",
-    "DP", "그래프", "자료구조", "정렬", "문자열", "수학",
-}
+
+def call(method, path, version=V_OLD, **kwargs):
+    headers = {
+        "Authorization": f"Bearer {TOKEN}",
+        "Notion-Version": version,
+        "Content-Type": "application/json",
+    }
+    return requests.request(method, f"{API}{path}", headers=headers, timeout=30, **kwargs)
+
+
+# ---------------------------------------------------------------- DB 탐색
+
+def list_accessible():
+    """인테그레이션이 접근 가능한 DB / 데이터 소스를 모두 나열한다."""
+    found = []
+
+    res = call("POST", "/search", V_OLD,
+               json={"filter": {"value": "database", "property": "object"}, "page_size": 100})
+    if res.ok:
+        for obj in res.json().get("results", []):
+            title = "".join(t.get("plain_text", "") for t in obj.get("title", [])) or "(제목 없음)"
+            found.append(("database", obj["id"].replace("-", ""), title))
+
+    res = call("POST", "/search", V_NEW,
+               json={"filter": {"value": "data_source", "property": "object"}, "page_size": 100})
+    if res.ok:
+        for obj in res.json().get("results", []):
+            title = "".join(t.get("plain_text", "") for t in obj.get("title", [])) or "(제목 없음)"
+            found.append(("data_source", obj["id"].replace("-", ""), title))
+
+    return found
+
+
+def print_accessible(found):
+    print("-" * 64)
+    if not found:
+        print("인테그레이션이 접근할 수 있는 DB가 하나도 없습니다.")
+        print("→ Notion 페이지 우측 상단 ··· → 연결 → 인테그레이션을 추가하세요.")
+    else:
+        print("인테그레이션이 접근 가능한 대상:")
+        for kind, oid, title in found:
+            print(f"  [{kind:11}] {oid}  {title}")
+    print("-" * 64)
+
+
+def probe(kind, oid):
+    """해당 대상에 실제로 쿼리가 되는지 확인."""
+    if kind == "data_source":
+        res = call("POST", f"/data_sources/{oid}/query", V_NEW, json={"page_size": 1})
+    else:
+        res = call("POST", f"/databases/{oid}/query", V_OLD, json={"page_size": 1})
+    return res.ok
+
+
+def resolve_target():
+    """(kind, id) 반환. 실패 시 진단 출력 후 종료."""
+    # 1) 지정된 ID를 두 방식으로 시도
+    if RAW_DB_ID:
+        for kind in ("data_source", "database"):
+            if probe(kind, RAW_DB_ID):
+                print(f"✔ 대상 확인: {kind} / {RAW_DB_ID}")
+                return kind, RAW_DB_ID
+        print(f"⚠ NOTION_DATABASE_ID({RAW_DB_ID})로 조회할 수 없습니다. 이름으로 재탐색합니다.")
+
+    # 2) 이름으로 자동 탐색
+    found = list_accessible()
+    for kind, oid, title in found:
+        if DB_NAME_HINT in title and probe(kind, oid):
+            print(f"✔ 이름으로 찾음: {kind} / {oid}  ({title})")
+            print(f"  → NOTION_DATABASE_ID 를 {oid} 로 바꿔두면 다음부터 빨라집니다.")
+            return kind, oid
+
+    print("❌ 사용할 수 있는 DB를 찾지 못했습니다.")
+    print_accessible(found)
+    sys.exit(1)
 
 
 # ---------------------------------------------------------------- 파싱
 
-def parse_path(path):
-    """week01/이정현/BOJ_1000_A와B.py -> dict"""
-    parts = path.split("/")
-    if len(parts) < 3:
-        raise ValueError(f"경로 규칙에 맞지 않음: {path}")
+PLATFORM_MAP = {
+    "SWEA": "SWEA", "PGS": "프로그래머스", "PROGRAMMERS": "프로그래머스",
+    "BOJ": "백준", "LC": "LeetCode", "LEETCODE": "LeetCode",
+}
+VALID_DIFFICULTY = {"Lv1", "Lv2", "Lv3", "Lv4+"}
+VALID_TYPES = {"구현", "완전탐색", "DFS/BFS", "이분탐색", "그리디",
+               "DP", "그래프", "자료구조", "정렬", "문자열", "수학"}
 
-    week_dir, solver, filename = parts[0], parts[1], parts[-1]
-
-    m = re.match(r"week(\d+)", week_dir, re.IGNORECASE)
-    week = f"{int(m.group(1))}주차" if m else None
-
-    stem = re.sub(r"\.py$", "", filename)
-    bits = stem.split("_", 2)
-
-    platform = PLATFORM_MAP.get(bits[0].upper(), "기타") if bits else "기타"
-    number = bits[1] if len(bits) > 1 else ""
-    title = bits[2].replace("_", " ") if len(bits) > 2 else stem
-
-    display = f"[{platform}] {number} {title}".strip()
-    return {
-        "주차": week,
-        "풀이자": solver,
-        "플랫폼": platform,
-        "문제명": display,
-    }
-
-
-def parse_header(path):
-    """파일 상단 docstring에서 메타데이터를 뽑는다."""
-    with open(path, encoding="utf-8") as fp:
-        text = fp.read(4000)
-
-    m = re.search(r'"""(.*?)"""', text, re.DOTALL)
-    if not m:
-        return {}
-
-    meta = {}
-    for line in m.group(1).splitlines():
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip().replace(" ", "")
-        value = value.strip()
-        if value:
-            meta[key] = value
-    return meta
-
-
-# ---------------------------------------------------------------- 속성 조립
-
-def build_properties(path, info, meta):
-    code_url = f"https://github.com/{REPO}/blob/{SHA}/{path}" if REPO else None
-
-    props = {
-        "문제명": {"title": [{"text": {"content": info["문제명"]}}]},
-        "플랫폼": {"select": {"name": info["플랫폼"]}},
-        "풀이일": {"date": {"start": date.today().isoformat()}},
-        "상태": {"status": {"name": "완료"}},
-    }
-
-    if info["주차"]:
-        props["주차"] = {"select": {"name": info["주차"]}}
-    if info["풀이자"]:
-        props["풀이자"] = {"select": {"name": info["풀이자"]}}
-    if code_url:
-        props["코드 링크"] = {"url": code_url}
-
-    if link := meta.get("링크"):
-        props["문제 링크"] = {"url": link}
-
-    if (lv := meta.get("난이도")) in VALID_DIFFICULTY:
-        props["난이도"] = {"select": {"name": lv}}
-
-    if raw_types := meta.get("유형"):
-        tags = [t.strip() for t in re.split(r"[,/·]| ", raw_types) if t.strip()]
-        tags = [t for t in tags if t in VALID_TYPES]
-        # 'DFS/BFS'는 위 split에서 쪼개지므로 별도 복원
-        if "DFS" in raw_types or "BFS" in raw_types:
-            tags.append("DFS/BFS")
-        if tags:
-            props["유형"] = {"multi_select": [{"name": t} for t in dict.fromkeys(tags)]}
-
-    if big_o := meta.get("시간복잡도"):
-        props["시간복잡도"] = {"rich_text": [{"text": {"content": big_o}}]}
-
-    if retro := meta.get("회고"):
-        props["한 줄 회고"] = {"rich_text": [{"text": {"content": retro[:1900]}}]}
-
-    if spent := meta.get("소요시간"):
-        digits = re.sub(r"\D", "", spent)
-        if digits:
-            props["소요 시간(분)"] = {"number": int(digits)}
-
-    if review := meta.get("복습필요"):
-        props["복습 필요"] = {"checkbox": review.upper() in {"Y", "YES", "O", "TRUE", "예"}}
-
-    return props
-
-
-# ---------------------------------------------------------------- Notion 호출
-
-def find_existing(title, solver):
-    """같은 사람이 같은 문제를 이미 올렸는지 확인 (중복 방지)."""
-    payload = {
-        "filter": {
-            "and": [
-                {"property": "문제명", "title": {"equals": title}},
-                {"property": "풀이자", "select": {"equals": solver}},
-            ]
-        },
-        "page_size": 1,
-    }
-    res = requests.post(
-        f"{API}/databases/{DATABASE_ID}/query", headers=HEADERS, json=payload, timeout=30
-    )
-    res.raise_for_status()
-    results = res.json().get("results", [])
-    return results[0]["id"] if results else None
-
-
-def upsert(props, title, solver):
-    page_id = find_existing(title, solver)
-
-    if page_id:
-        res = requests.patch(
-            f"{API}/pages/{page_id}", headers=HEADERS, json={"properties": props}, timeout=30
-        )
-        action = "갱신"
-    else:
-        body = {"parent": {"database_id": DATABASE_ID}, "properties": props}
-        res = requests.post(f"{API}/pages", headers=HEADERS, json=body, timeout=30)
-        action = "생성"
-
-    if res.status_code >= 400:
-        print(f"  ✗ 실패 ({res.status_code}): {res.text[:300]}")
-        res.raise_for_status()
-
-    print(f"  ✓ {action} 완료")
-
-
-# ---------------------------------------------------------------- 진입점
 
 def unquote_git_path(path):
     """git이 비ASCII 경로를 "week01/\\354\\235\\264..." 로 감싸 출력하는 경우를 되돌린다."""
@@ -194,44 +131,168 @@ def unquote_git_path(path):
     if len(path) >= 2 and path.startswith('"') and path.endswith('"'):
         inner = path[1:-1]
         try:
-            raw = bytes(inner, "utf-8").decode("unicode_escape").encode("latin-1")
-            return raw.decode("utf-8")
+            return bytes(inner, "utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8")
         except (UnicodeDecodeError, UnicodeEncodeError):
             return inner
     return path
 
 
-def sync_one(path):
+def parse_path(path):
+    parts = path.split("/")
+    if len(parts) < 3:
+        raise ValueError(f"경로 규칙에 맞지 않음: {path}")
+
+    week_dir, solver, filename = parts[0], parts[1], parts[-1]
+    m = re.match(r"week(\d+)", week_dir, re.IGNORECASE)
+    week = f"{int(m.group(1))}주차" if m else None
+
+    stem = re.sub(r"\.py$", "", filename)
+    bits = stem.split("_", 2)
+    platform = PLATFORM_MAP.get(bits[0].upper(), "기타") if bits else "기타"
+    number = bits[1] if len(bits) > 1 else ""
+    title = bits[2].replace("_", " ") if len(bits) > 2 else stem
+
+    return {
+        "주차": week,
+        "풀이자": solver,
+        "플랫폼": platform,
+        "문제명": f"[{platform}] {number} {title}".strip(),
+    }
+
+
+def parse_header(path):
+    with open(path, encoding="utf-8") as fp:
+        text = fp.read(4000)
+    m = re.search(r'"""(.*?)"""', text, re.DOTALL)
+    if not m:
+        return {}
+    meta = {}
+    for line in m.group(1).splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key, value = key.strip().replace(" ", ""), value.strip()
+        if value:
+            meta[key] = value
+    return meta
+
+
+def build_properties(path, info, meta):
+    props = {
+        "문제명": {"title": [{"text": {"content": info["문제명"]}}]},
+        "플랫폼": {"select": {"name": info["플랫폼"]}},
+        "풀이일": {"date": {"start": date.today().isoformat()}},
+        "상태": {"status": {"name": "완료"}},
+    }
+    if info["주차"]:
+        props["주차"] = {"select": {"name": info["주차"]}}
+    if info["풀이자"]:
+        props["풀이자"] = {"select": {"name": info["풀이자"]}}
+    if REPO:
+        props["코드 링크"] = {"url": f"https://github.com/{REPO}/blob/{SHA}/{path}"}
+    if link := meta.get("링크"):
+        props["문제 링크"] = {"url": link}
+    if (lv := meta.get("난이도")) in VALID_DIFFICULTY:
+        props["난이도"] = {"select": {"name": lv}}
+    if raw := meta.get("유형"):
+        tags = [t.strip() for t in re.split(r"[,·]|\s", raw) if t.strip()]
+        tags = [t for t in tags if t in VALID_TYPES]
+        if "DFS" in raw or "BFS" in raw:
+            tags.append("DFS/BFS")
+        if tags:
+            props["유형"] = {"multi_select": [{"name": t} for t in dict.fromkeys(tags)]}
+    if big_o := meta.get("시간복잡도"):
+        props["시간복잡도"] = {"rich_text": [{"text": {"content": big_o}}]}
+    if retro := meta.get("회고"):
+        props["한 줄 회고"] = {"rich_text": [{"text": {"content": retro[:1900]}}]}
+    if spent := meta.get("소요시간"):
+        if digits := re.sub(r"\D", "", spent):
+            props["소요 시간(분)"] = {"number": int(digits)}
+    if review := meta.get("복습필요"):
+        props["복습 필요"] = {"checkbox": review.upper() in {"Y", "YES", "O", "TRUE", "예"}}
+    return props
+
+
+# ---------------------------------------------------------------- 기록
+
+def explain(res):
+    print(f"    {res.text[:400]}")
+    if res.status_code == 401:
+        print("    → NOTION_TOKEN 오류. 앞뒤 공백이나 워크스페이스를 확인하세요.")
+    elif res.status_code == 404:
+        print("    → 인테그레이션이 해당 DB에 연결되어 있지 않습니다.")
+    elif res.status_code == 400:
+        print("    → 속성 이름/타입 불일치. 위 message를 확인하세요.")
+
+
+def upsert(kind, oid, props, title, solver):
+    query_filter = {
+        "and": [
+            {"property": "문제명", "title": {"equals": title}},
+            {"property": "풀이자", "select": {"equals": solver}},
+        ]
+    }
+    if kind == "data_source":
+        res = call("POST", f"/data_sources/{oid}/query", V_NEW,
+                   json={"filter": query_filter, "page_size": 1})
+        parent = {"type": "data_source_id", "data_source_id": oid}
+        version = V_NEW
+    else:
+        res = call("POST", f"/databases/{oid}/query", V_OLD,
+                   json={"filter": query_filter, "page_size": 1})
+        parent = {"database_id": oid}
+        version = V_OLD
+
+    if not res.ok:
+        print(f"  ✗ 조회 실패 ({res.status_code})")
+        explain(res)
+        return False
+
+    results = res.json().get("results", [])
+    if results:
+        res = call("PATCH", f"/pages/{results[0]['id']}", version, json={"properties": props})
+        action = "갱신"
+    else:
+        res = call("POST", "/pages", version, json={"parent": parent, "properties": props})
+        action = "생성"
+
+    if not res.ok:
+        print(f"  ✗ {action} 실패 ({res.status_code})")
+        explain(res)
+        return False
+
+    print(f"  ✓ {action} 완료")
+    return True
+
+
+def sync_one(kind, oid, path):
     print(f"→ {path}")
-
     if not os.path.isfile(path):
-        print("  · 건너뜀: 파일을 찾을 수 없음")
-        return
-
+        print("  · 건너뜀: 파일 없음")
+        return True
     try:
         info = parse_path(path)
     except ValueError as exc:
         print(f"  · 건너뜀: {exc}")
-        return
-
-    meta = parse_header(path)
-    props = build_properties(path, info, meta)
-    upsert(props, info["문제명"], info["풀이자"])
+        return True
+    props = build_properties(path, info, parse_header(path))
+    return upsert(kind, oid, props, info["문제명"], info["풀이자"])
 
 
 def main():
     args = sys.argv[1:]
 
+    if args and args[0] == "--diagnose":
+        print_accessible(list_accessible())
+        return
+
     if not args:
-        print("파일 경로 또는 --from-file <목록파일> 을 넘겨주세요.")
+        print("사용법: notion_sync.py --from-file <목록> | <경로...> | --diagnose")
         sys.exit(1)
 
     if args[0] == "--from-file":
-        if len(args) < 2:
-            print("--from-file 뒤에 목록 파일 경로가 필요합니다.")
-            sys.exit(1)
         with open(args[1], encoding="utf-8") as fp:
-            paths = [unquote_git_path(line) for line in fp if line.strip()]
+            paths = [unquote_git_path(l) for l in fp if l.strip()]
     else:
         paths = [unquote_git_path(a) for a in args]
 
@@ -239,8 +300,16 @@ def main():
         print("동기화할 파일이 없습니다.")
         return
 
+    kind, oid = resolve_target()
+
+    failed = 0
     for path in paths:
-        sync_one(path)
+        if not sync_one(kind, oid, path):
+            failed += 1
+
+    print(f"\n총 {len(paths)}건 중 {len(paths) - failed}건 성공, {failed}건 실패")
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
