@@ -188,13 +188,25 @@ def upsert(props, title, solver):
 
 # ---------------------------------------------------------------- 진입점
 
-def main():
-    if len(sys.argv) < 2:
-        print("파일 경로를 인자로 넘겨주세요.")
-        sys.exit(1)
+def unquote_git_path(path):
+    """git이 비ASCII 경로를 "week01/\\354\\235\\264..." 로 감싸 출력하는 경우를 되돌린다."""
+    path = path.strip()
+    if len(path) >= 2 and path.startswith('"') and path.endswith('"'):
+        inner = path[1:-1]
+        try:
+            raw = bytes(inner, "utf-8").decode("unicode_escape").encode("latin-1")
+            return raw.decode("utf-8")
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            return inner
+    return path
 
-    path = sys.argv[1]
+
+def sync_one(path):
     print(f"→ {path}")
+
+    if not os.path.isfile(path):
+        print("  · 건너뜀: 파일을 찾을 수 없음")
+        return
 
     try:
         info = parse_path(path)
@@ -205,6 +217,30 @@ def main():
     meta = parse_header(path)
     props = build_properties(path, info, meta)
     upsert(props, info["문제명"], info["풀이자"])
+
+
+def main():
+    args = sys.argv[1:]
+
+    if not args:
+        print("파일 경로 또는 --from-file <목록파일> 을 넘겨주세요.")
+        sys.exit(1)
+
+    if args[0] == "--from-file":
+        if len(args) < 2:
+            print("--from-file 뒤에 목록 파일 경로가 필요합니다.")
+            sys.exit(1)
+        with open(args[1], encoding="utf-8") as fp:
+            paths = [unquote_git_path(line) for line in fp if line.strip()]
+    else:
+        paths = [unquote_git_path(a) for a in args]
+
+    if not paths:
+        print("동기화할 파일이 없습니다.")
+        return
+
+    for path in paths:
+        sync_one(path)
 
 
 if __name__ == "__main__":

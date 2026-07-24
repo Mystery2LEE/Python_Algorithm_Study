@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, master]
     paths:
-      - 'week*/**/*.py'
+      - "week*/**/*.py"
   # Actions 탭에서 버튼으로 직접 실행 (전체 재동기화용)
   workflow_dispatch:
 
@@ -15,42 +15,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # 이전 커밋과 비교해야 하므로 최소 2개 이상의 히스토리 필요
+          # 이전 커밋과 비교해야 하므로 전체 히스토리 필요
           fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: pip install requests
 
       - name: Collect changed files
-        id: changed
         run: |
+          # 한글 등 비ASCII 파일명이 \354\235\264 형태로 깨지는 것을 방지
+          git config core.quotepath false
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # 수동 실행: 레포 전체 파일 대상
-            FILES=$(git ls-files 'week*/**/*.py')
+            git ls-files 'week*/**/*.py' > changed_files.txt
           elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            # 최초 push(브랜치 생성)인 경우: 전체 파일 대상
-            FILES=$(git ls-files 'week*/**/*.py')
+            git ls-files 'week*/**/*.py' > changed_files.txt
           else
-            FILES=$(git diff --name-only --diff-filter=AM ${{ github.event.before }} ${{ github.sha }} -- 'week*/**/*.py')
+            git diff --name-only --diff-filter=AM \
+              ${{ github.event.before }} ${{ github.sha }} \
+              -- 'week*/**/*.py' > changed_files.txt
           fi
-          echo "files<<EOF" >> $GITHUB_OUTPUT
-          echo "$FILES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "----- 대상 파일 -----"
+          cat changed_files.txt
+          echo "---------------------"
 
       - name: Sync to Notion
-        if: steps.changed.outputs.files != ''
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
-          echo "${{ steps.changed.outputs.files }}" | while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            python scripts/notion_sync.py "$f"
-          done
+          if [ ! -s changed_files.txt ]; then
+            echo "동기화할 파일이 없습니다."
+            exit 0
+          fi
+          # 파일 목록을 그대로 스크립트에 전달 (셸 이스케이프 문제 회피)
+          python scripts/notion_sync.py --from-file changed_files.txt
