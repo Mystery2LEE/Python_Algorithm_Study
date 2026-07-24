@@ -49,6 +49,28 @@ def call(method, path, version=V_OLD, **kwargs):
 
 # ---------------------------------------------------------------- DB 탐색
 
+def whoami():
+    """토큰이 어느 워크스페이스 / 어떤 인테그레이션의 것인지 출력."""
+    res = call("GET", "/users/me", V_OLD)
+    if not res.ok:
+        print(f"❌ 토큰 확인 실패 ({res.status_code})")
+        print(f"   {res.text[:300]}")
+        if res.status_code == 401:
+            print("   → NOTION_TOKEN 값이 잘못되었습니다. 복사할 때 공백이 섞였는지 확인하세요.")
+        return None
+
+    me = res.json()
+    bot = me.get("bot", {})
+    ws = bot.get("workspace_name") or "(알 수 없음)"
+    name = me.get("name") or "(이름 없음)"
+
+    print("=" * 64)
+    print(f"🔑 토큰 주인   : {name}")
+    print(f"🏢 워크스페이스 : {ws}")
+    print("=" * 64)
+    return ws
+
+
 def list_accessible():
     """인테그레이션이 접근 가능한 DB / 데이터 소스를 모두 나열한다."""
     found = []
@@ -70,13 +92,41 @@ def list_accessible():
     return found
 
 
+def list_pages():
+    """접근 가능한 일반 페이지도 확인 (연결 자체가 붙었는지 판단용)."""
+    res = call("POST", "/search", V_OLD,
+               json={"filter": {"value": "page", "property": "object"}, "page_size": 20})
+    if not res.ok:
+        return []
+    out = []
+    for obj in res.json().get("results", []):
+        props = obj.get("properties", {})
+        title = "(제목 없음)"
+        for prop in props.values():
+            if prop.get("type") == "title":
+                title = "".join(t.get("plain_text", "") for t in prop.get("title", [])) or title
+                break
+        out.append(title)
+    return out
+
+
 def print_accessible(found):
     print("-" * 64)
     if not found:
-        print("인테그레이션이 접근할 수 있는 DB가 하나도 없습니다.")
-        print("→ Notion 페이지 우측 상단 ··· → 연결 → 인테그레이션을 추가하세요.")
+        print("접근 가능한 DB: 없음")
+        pages = list_pages()
+        if pages:
+            print("다만 아래 페이지에는 접근됩니다:")
+            for title in pages:
+                print(f"  · {title}")
+            print("→ 페이지 연결은 되어 있으나 DB가 그 하위에 없습니다.")
+            print("  DB가 들어있는 상위 페이지에 연결을 추가하세요.")
+        else:
+            print("접근 가능한 페이지도 없음 → 연결이 전혀 안 붙어 있습니다.")
+            print("→ 위에 표시된 워크스페이스에서 BASE CAMP 페이지를 열고")
+            print("  ··· → 연결 → 연결 추가 → 인테그레이션 선택")
     else:
-        print("인테그레이션이 접근 가능한 대상:")
+        print("접근 가능한 대상:")
         for kind, oid, title in found:
             print(f"  [{kind:11}] {oid}  {title}")
     print("-" * 64)
@@ -110,6 +160,7 @@ def resolve_target():
             return kind, oid
 
     print("❌ 사용할 수 있는 DB를 찾지 못했습니다.")
+    whoami()
     print_accessible(found)
     sys.exit(1)
 
@@ -283,6 +334,7 @@ def main():
     args = sys.argv[1:]
 
     if args and args[0] == "--diagnose":
+        whoami()
         print_accessible(list_accessible())
         return
 
