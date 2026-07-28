@@ -171,7 +171,9 @@ PLATFORM_MAP = {
     "SWEA": "SWEA", "PGS": "프로그래머스", "PROGRAMMERS": "프로그래머스",
     "BOJ": "백준", "LC": "LeetCode", "LEETCODE": "LeetCode",
 }
-VALID_DIFFICULTY = {"Lv1", "Lv2", "Lv3", "Lv4+"}
+VALID_DIFFICULTY = {"D1", "D2", "D3", "D4", "D5", "D6+"}
+# D4 이상이면 자동으로 복습 대상으로 표시 (어려운 문제는 다시 풀 가치가 있음)
+AUTO_REVIEW_DIFFICULTY = {"D4", "D5", "D6+"}
 VALID_TYPES = {"구현", "완전탐색", "DFS/BFS", "이분탐색", "그리디",
                "DP", "그래프", "자료구조", "정렬", "문자열", "수학"}
 
@@ -228,12 +230,32 @@ def parse_header(path):
     return meta
 
 
+def normalize_difficulty(raw):
+    """'d3', 'Lv3', 'D3' 등을 표준 'D3'로. SWEA D체계로 통일."""
+    if not raw:
+        return None
+    s = raw.strip().upper().replace(" ", "")
+    # Lv 표기가 들어오면 D로 매핑 (과거 습관 방어)
+    s = s.replace("LV", "D").replace("LEVEL", "D")
+    if s in VALID_DIFFICULTY:
+        return s
+    # 'D4+' 같은 변형 흡수
+    if s in {"D6", "D7", "D8", "D9", "D6+", "D7+"}:
+        return "D6+"
+    return None
+
+
 def build_properties(path, info, meta):
+    # 상태: 기본은 완료. 주석에 '상태: 시도중' 이면 진행 중으로.
+    status = "완료"
+    if (st := meta.get("상태", "")).replace(" ", "") in {"시도중", "진행중", "풀이중", "WIP"}:
+        status = "진행 중"
+
     props = {
         "문제명": {"title": [{"text": {"content": info["문제명"]}}]},
         "플랫폼": {"select": {"name": info["플랫폼"]}},
         "풀이일": {"date": {"start": date.today().isoformat()}},
-        "상태": {"status": {"name": "완료"}},
+        "상태": {"status": {"name": status}},
     }
     if info["주차"]:
         props["주차"] = {"select": {"name": info["주차"]}}
@@ -243,8 +265,11 @@ def build_properties(path, info, meta):
         props["코드 링크"] = {"url": f"https://github.com/{REPO}/blob/{SHA}/{path}"}
     if link := meta.get("링크"):
         props["문제 링크"] = {"url": link}
-    if (lv := meta.get("난이도")) in VALID_DIFFICULTY:
-        props["난이도"] = {"select": {"name": lv}}
+
+    difficulty = normalize_difficulty(meta.get("난이도"))
+    if difficulty:
+        props["난이도"] = {"select": {"name": difficulty}}
+
     if raw := meta.get("유형"):
         tags = [t.strip() for t in re.split(r"[,·]|\s", raw) if t.strip()]
         tags = [t for t in tags if t in VALID_TYPES]
@@ -259,8 +284,13 @@ def build_properties(path, info, meta):
     if spent := meta.get("소요시간"):
         if digits := re.sub(r"\D", "", spent):
             props["소요 시간(분)"] = {"number": int(digits)}
-    if review := meta.get("복습필요"):
-        props["복습 필요"] = {"checkbox": review.upper() in {"Y", "YES", "O", "TRUE", "예"}}
+
+    # 복습 필요: ① 명시적으로 Y 적었거나  ② 난이도가 D4 이상이면 자동 체크
+    review_explicit = meta.get("복습필요", "").upper() in {"Y", "YES", "O", "TRUE", "예"}
+    review_auto = difficulty in AUTO_REVIEW_DIFFICULTY
+    if "복습필요" in meta or review_auto:
+        props["복습 필요"] = {"checkbox": review_explicit or review_auto}
+
     return props
 
 
