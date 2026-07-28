@@ -1,0 +1,30 @@
+name: Weekly Report
+
+on:
+  schedule:
+    # 매주 일요일 22:00 KST = 일요일 13:00 UTC
+    - cron: '0 13 * * 0'
+  # Actions 탭에서 버튼으로 직접 실행
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Generate weekly report
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          NOTION_REPORT_DB_ID: ${{ secrets.NOTION_REPORT_DB_ID }}
+        run: python scripts/weekly_report.py
