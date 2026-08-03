@@ -95,13 +95,21 @@ def prop_text(page, name):
 
 
 def week_bounds():
-    """지난 주 월요일 00:00 ~ 이번 주 월요일 00:00 (KST)."""
+    """결산 대상 주간의 [월요일 00:00, 다음 월요일 00:00) (KST).
+
+    일요일 밤 22시에 실행되는 것을 기준으로, '방금 끝나가는 이번 주'
+    (월~일)를 결산한다. 일요일에 돌리면 그 주 자신이 대상이 되어야 한다.
+
+    구현: '어제'가 속한 주의 월요일을 기준으로 삼는다.
+    - 일요일(8/2)에 실행 → 어제=토요일(8/1) → 그 주 월요일=7/27 → 7/27~8/2 결산 ✓
+    - 월요일 새벽에 늦게 실행되더라도 → 어제=일요일 → 같은 주가 잡힘 ✓
+    """
     now = datetime.now(KST)
-    # 이번 주 월요일
-    this_monday = (now - timedelta(days=now.weekday())).replace(
+    anchor = now - timedelta(days=1)  # 어제 기준
+    monday = (anchor - timedelta(days=anchor.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0)
-    last_monday = this_monday - timedelta(days=7)
-    return last_monday, this_monday
+    next_monday = monday + timedelta(days=7)
+    return monday, next_monday
 
 
 def main():
