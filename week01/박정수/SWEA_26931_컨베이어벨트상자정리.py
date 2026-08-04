@@ -1,6 +1,6 @@
 T = int(input())
 for test_case in range(1, T + 1):
-    s = input()
+    s = input().strip()
     stack = []
 
     for i in range(len(s)):
