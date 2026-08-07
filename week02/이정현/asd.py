@@ -1,39 +1,48 @@
-T = int(input())
+T = 10
+
+class Node:
+    def __init__(self, data):
+        self.data = data
+        self.next = None
+
 
 for test_case in range(1, T + 1):
-    n, x = map(int, input().split())
-    arr = [list(map(int, input().split())) for _ in range(n)]
-    arr_rotated = [list(row) for row in zip(*arr[::-1])]
+    print(f"#{test_case}", end=" ")
+    n = int(input())
+    arr = list(input().split())
 
-    can = 0
-    for i in range(n):
-        r_is_can = True
-        c_is_can = True
-        count = 1
-        for j in range(n):
-            a = arr[i][j]
-            b = arr_rotated[i][j]
-            if j > 0:
-                if arr[i][j-1] == a:
-                    count += 1
-                else:
-                    if count < x or 1 < abs(arr[i][j-1] - a):
-                        r_is_can = False
-                        break
-                    else:
-                        count = 1
+    head = None
+    prev = None
 
-                if arr_rotated[i][j - 1] == a:
-                    count += 1
-                else:
-                    if count < x or 1 < abs(arr_rotated[i][j - 1] - a):
-                        c_is_can = False
-                        break
-                    else:
-                        count = 1
-        if r_is_can:
-            can += 1
-        if c_is_can:
-            can += 1
+    for a in arr:
+        if head is None:
+            curr = Node(a)
+            head = curr
 
-    print(f"#{test_case} {can}")
+        else:
+            curr.next = Node(a)
+            prev = curr
+            curr = curr.next
+
+    control_n = int(input())
+    control_list = [c.strip().split() for c in list(input().split('I')) if c != '']
+
+    for i in range(control_n):
+        node_num = int(control_list[i][0])
+        num_count = int(control_list[i][1])
+        curr = head
+
+        for _ in range(node_num):
+            prev = curr
+            curr = curr.next
+
+        for j in range(num_count):
+            node = Node(control_list[i][2+j])
+            node.next = curr
+            prev.next = node
+
+    node = head
+    for _ in range(10):
+        print(node.data, end=" ")
+        node = node.next
+    print()
