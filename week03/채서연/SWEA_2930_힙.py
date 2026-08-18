@@ -1,8 +1,7 @@
 # 최대힙
 
 # 삽입
-def insert(item):
-    global heap
+def insert(heap, item):
     heap.append(item)
     idx = len(heap) -1
     
@@ -13,35 +12,52 @@ def insert(item):
             idx = parent
         else:
             break
+
 #삭제
 def delete(heap):
-    heap_size = len(heap)
-    if not heap:
-        print(-1, end=' ')
-    elif len(heap) <= 2:
-        print(heap.pop(), end=' ')
-    else:
-        heap[0], heap[-1] = heap[-1], heap[0]
-        print(heap.pop(), end=' ')
-        parent = 0
-        left = parent*2 + 1
-        right = parent*2 + 2
-        while True:
-            if left < heap_size and heap[parent] < heap[left]:
-                pass
-            
-        
+    if not heap:        
+        return -1
 
+    result = heap[0]
+    heap[0] = heap[-1]
+    heap.pop()
+    
+    if not heap:
+        return result
+
+    parent = 0
+    while True:
+        left = parent * 2 + 1
+        right = parent * 2 + 2
+
+        if left >= len(heap):
+            break
+
+        child = left
+
+        if right < len(heap) and heap[right] > heap[left]:
+            child = right
+
+        if heap[parent] >= heap[child]:
+            break
+
+        heap[parent], heap[child] = heap[child], heap[parent]
+        parent = child
+    return result
 
 T = int(input())
 for tc in range(1, T+1):
-    cmd = list(map(int,input().split()))
+    N = int(input())
     heap = []
-    # 삽입
-    if cmd[0] == 1:
-        insert(cmd[1])
+    result = []
+    for _ in range(N):        
+        cmd = list(map(int,input().split()))
         
-    # 최댓값(루트) 출력 후 해당 키값 삭제
-    else:
-        delete(heap)
-    print(f'#{tc}')
+        if cmd[0] == 1:
+            insert(heap, cmd[1])
+            
+        else:
+            result.append(delete(heap))
+    print(f'#{tc}', *result)
+
+# reuslt로 delete한 데이터 모아서 한번에 출력해야 시간초과 안 남
