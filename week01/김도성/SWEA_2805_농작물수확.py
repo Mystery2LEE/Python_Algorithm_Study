@@ -9,7 +9,6 @@ for test_case in range(1, T + 1):
 
     count = 0
     for i in range(n):
-        print(count)
         if i < n//2:
             for j in range(n // 2 - i, n // 2 + 1 + i):
                 count += int(arr_list[i][j])
