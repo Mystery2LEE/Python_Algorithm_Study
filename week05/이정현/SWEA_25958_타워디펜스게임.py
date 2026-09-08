@@ -5,7 +5,7 @@ def init(N: int, mMap: List[List[int]]) -> None:
     global size, path, cell_to_idx, tw_interval, tw_cov_list, tw_cov_set
 
     size = N
-    # [FIX 10] reset tower state for every test case
+    # [수정 10] 테스트케이스마다 타워 상태를 완전히 새로 만든다
     tw_interval, tw_cov_list, tw_cov_set = [], [], []
 
     start = end = None
@@ -17,15 +17,15 @@ def init(N: int, mMap: List[List[int]]) -> None:
             elif v == 3:
                 end = (i, j)
 
-    # [FIX 8a] path is unique, so walk it once here and store it as a list.
-    #          runner position becomes a single path index, so move() disappears.
+    # [수정 8a] 경로가 유일하므로 여기서 한 번만 훑어 리스트로 만든다.
+    #           도망자 위치가 좌표가 아니라 경로 인덱스 정수 하나가 되어 move 함수가 사라진다
     path = [start]
     seen = {start}
     cur = start
     while cur != end:
         r, c = cur
         for nr, nc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):
-            # [FIX 8b] bounds check BEFORE array access; allow the goal cell (value 3)
+            # [수정 8b] 경계 검사를 배열 접근보다 먼저 한다. 도착지(값 3)도 통과시킨다
             if 0 <= nr < N and 0 <= nc < N and (nr, nc) not in seen and mMap[nr][nc] in (1, 3):
                 cur = (nr, nc)
                 seen.add(cur)
@@ -38,7 +38,7 @@ def init(N: int, mMap: List[List[int]]) -> None:
 
 
 def addTower(mRow: int, mCol: int, mInterval: int) -> None:
-    # [FIX 1] range is distance <= 3 (full diamond). "== 3" only caught the rim.
+    # [수정 1] 사정거리는 거리 3 이하, 즉 마름모 전체다. 기존 == 3 은 테두리만 잡혔다
     cov = []
     for dr in range(-3, 4):
         nr = mRow + dr
@@ -53,14 +53,14 @@ def addTower(mRow: int, mCol: int, mInterval: int) -> None:
             if p is not None:
                 cov.append(p)
 
-    # a tower covering no path cell can never fire, so drop it entirely
+    # 사정거리 안에 길이 하나도 없는 타워는 영원히 못 쏘므로 아예 제외한다
     if not cov:
         return
 
     cov.sort()
     tw_interval.append(mInterval)
     tw_cov_list.append(cov)
-    tw_cov_set.append(set(cov))   # O(1) check for "keep last target"
+    tw_cov_set.append(set(cov))   # 직전 타겟 유지 판정을 O(1)로 하기 위한 집합
 
 
 def runSimulation(M: int, mInterval: int, mHP: int,
@@ -71,16 +71,16 @@ def runSimulation(M: int, mInterval: int, mHP: int,
     cov_list, cov_set, iv = tw_cov_list, tw_cov_set, tw_interval
 
     hp = [mHP] * M
-    pos = [-1] * M          # runner -> path index. -1 means not on the map
-    occ = [-1] * L          # path index -> runner id (at most one per cell)
-    on_map = []             # runners on the map, ascending = closest to goal first
-    tgt = [-1] * T          # each tower's last target
+    pos = [-1] * M          # 도망자의 경로 인덱스, -1 이면 맵에 없음
+    occ = [-1] * L          # 경로 칸에 있는 도망자 번호, 한 칸에 최대 한 명
+    on_map = []             # 맵 위 도망자 번호, 오름차순이 도착지에 가까운 순
+    tgt = [-1] * T          # 타워의 직전 공격 대상
 
-    # [FIX 3] reload as a schedule of "next turn this tower may fire",
-    #         so a reloading tower never enters the loop and never picks a target
+    # [수정 3] 재장전을 플래그가 아니라 다음에 쏠 수 있는 턴 스케줄로 관리한다.
+    #          버킷에 없는 타워는 루프에 아예 안 들어오므로 대상 탐색도 하지 않는다
     max_t = mInterval * (M + L) + 64
     sched = [[] for _ in range(max_t + 32)]
-    sched[1] = list(range(T))       # every tower is ready when the game starts
+    sched[1] = list(range(T))       # 게임 시작 시 모든 타워는 준비 완료 상태
 
     spawned = 0
     finished = 0
@@ -89,18 +89,18 @@ def runSimulation(M: int, mInterval: int, mHP: int,
     while finished < M:
         t += 1
 
-        # ---------- pass 1: selection only, never touch HP here ----------
-        # [FIX 6] simultaneous attack requires selection and damage to be separate passes
+        # ---------- 1패스: 선정만 한다. 여기서는 체력을 절대 건드리지 않는다 ----------
+        # [수정 6] 동시에 공격하려면 선정 패스와 데미지 적용 패스를 반드시 분리해야 한다
         shots = []
         for i in sched[t]:
             last = tgt[i]
-            # [FIX 7a] keep the last target if it is ALIVE and still in range (rule 2-a).
-            #          dead or escaped runners have pos = -1, so the check fails by itself
+            # [수정 7a] 직전 타겟이 살아 있고 사정거리 내면 그대로 유지한다(규칙 2-a).
+            #           죽거나 탈출한 도망자는 pos 가 -1 이라 조건이 저절로 깨진다
             if last >= 0 and pos[last] >= 0 and pos[last] in cov_set[i]:
                 shots.append((i, last))
                 continue
 
-            # [FIX 5] priorities 2 and 3 as one tuple comparison: (remaining hp, spawn order)
+            # [수정 5] 우선순위 2와 3을 남은 체력, 등장 순서 튜플 비교 한 번으로 처리한다
             best, best_key = -1, None
             for p in cov_list[i]:
                 r = occ[p]
@@ -113,13 +113,13 @@ def runSimulation(M: int, mInterval: int, mHP: int,
             if best >= 0:
                 shots.append((i, best))
             else:
-                # [FIX 7b] no target found: last target is cleared, retry next turn (rule 3)
+                # [수정 7b] 대상을 못 찾으면 직전 타겟이 없는 상태가 되고 다음 턴에 다시 찾는다(규칙 3)
                 sched[t + 1].append(i)
 
-        # ---------- pass 2: apply all damage at once ----------
+        # ---------- 2패스: 여기서 데미지를 일괄 적용한다 ----------
         if shots:
             for i, r in shots:
-                hp[r] -= 1          # overkill is allowed even if hp already hit 0
+                hp[r] -= 1          # 체력이 이미 0 이어도 그대로 깎는다, 오버킬 허용
                 sched[t + iv[i]].append(i)
 
             died = False
@@ -134,12 +134,12 @@ def runSimulation(M: int, mInterval: int, mHP: int,
             if died:
                 on_map = [r for r in on_map if pos[r] >= 0]
 
-        # ---------- move and spawn ----------
-        # [FIX 2] spec order: attacks resolve first, movement and spawning come after
+        # ---------- 이동과 스폰 ----------
+        # [수정 2] 스펙 순서대로 공격이 모두 끝난 뒤에 이동과 스폰이 온다
         if t % mInterval == 0:
             if on_map:
                 arrived = False
-                # front runners move first so the cell behind them frees up
+                # 앞선 도망자부터 옮겨야 뒤 도망자가 들어올 칸이 비워진다
                 for r in on_map:
                     p = pos[r]
                     occ[p] = -1
@@ -156,11 +156,11 @@ def runSimulation(M: int, mInterval: int, mHP: int,
                 if arrived:
                     on_map = [r for r in on_map if pos[r] >= 0]
 
-            # [FIX 4] spawn counter is fully separated from the tower loop variable
+            # [수정 4] 스폰 카운터를 타워 루프 변수와 완전히 분리했다
             if spawned < M:
                 pos[spawned] = 0
                 occ[0] = spawned
                 on_map.append(spawned)
                 spawned += 1
 
-        # [FIX 9] loop until all M runners are gone, not just the last one
+        # [수정 9] 마지막 한 명만 보지 않고, 사라진 도망자 수가 M 이 될 때까지 반복한다
