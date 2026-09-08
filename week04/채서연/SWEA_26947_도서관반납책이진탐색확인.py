@@ -9,7 +9,7 @@ for tc in range(1, t+1):
     A = list(map(int, input().split()))
     B = list(map(int, input().split()))
     
-    
+    A.sort()
     def binary_search(l, r, x, prev):
         while l <= r:
             m = (l + r) // 2
