@@ -3,6 +3,7 @@
 
 경로 규칙:  week01/이정현/BOJ_1000_A와B.py
             └주차┘ └풀이자┘ └플랫폼┘└번호┘└문제명┘
+기업 기출: week08/이정현/CT_삼성전자_불안정한회로.py  (플랫폼 뒤에 기업명)
 
 파일 상단 docstring에서 메타데이터를 읽는다. 없으면 비워둔 채로 기록.
 
@@ -170,12 +171,36 @@ def resolve_target():
 PLATFORM_MAP = {
     "SWEA": "SWEA", "PGS": "프로그래머스", "PROGRAMMERS": "프로그래머스",
     "BOJ": "백준", "LC": "LeetCode", "LEETCODE": "LeetCode",
+    "CT": "코드트리", "CODETREE": "코드트리",
 }
-VALID_DIFFICULTY = {"D1", "D2", "D3", "D4", "D5", "D6+"}
-# D4 이상이면 자동으로 복습 대상으로 표시 (어려운 문제는 다시 풀 가치가 있음)
-AUTO_REVIEW_DIFFICULTY = {"D4", "D5", "D6+"}
+# 기업 기출: 파일명(CT_삼성전자_문제명.py) 또는 주석(기출: 삼성전자)에서 읽어 유형 태그로 기록
+COMPANIES = {"삼성전자", "현대자동차", "LG전자", "SK하이닉스", "카카오", "네이버"}
+COMPANY_ALIASES = {
+    "삼성": "삼성전자", "SAMSUNG": "삼성전자",
+    "현대": "현대자동차", "현대차": "현대자동차", "HYUNDAI": "현대자동차",
+    "LG": "LG전자",
+    "SK": "SK하이닉스", "하이닉스": "SK하이닉스", "HYNIX": "SK하이닉스",
+    "KAKAO": "카카오", "NAVER": "네이버",
+}
+
+
+def normalize_company(raw):
+    """'삼성' / 'samsung' / '삼성전자' → '삼성전자'. 모르는 이름이면 None."""
+    s = raw.strip()
+    if s in COMPANIES:
+        return s
+    return COMPANY_ALIASES.get(s.upper()) or COMPANY_ALIASES.get(s)
+# 난이도: SWEA는 D체계, 프로그래머스는 Lv체계를 그대로 기록한다.
+SWEA_DIFFICULTY = {"D1", "D2", "D3", "D4", "D5", "D6+"}
+PGS_DIFFICULTY = {"Lv0", "Lv1", "Lv2", "Lv3", "Lv4", "Lv5"}
+VALID_DIFFICULTY = SWEA_DIFFICULTY | PGS_DIFFICULTY
+# 이 난이도 이상은 복습필요를 안 적어도 자동으로 복습 대상 (SWEA D4+, 프로그래머스 Lv3+)
+AUTO_REVIEW_DIFFICULTY = {"D4", "D5", "D6+", "Lv3", "Lv4", "Lv5"}
 VALID_TYPES = {"구현", "완전탐색", "DFS/BFS", "이분탐색", "그리디",
                "DP", "그래프", "자료구조", "정렬", "문자열", "수학"}
+# 챌린지 DB 등에서 쓰는 세부 유형명을 기록 DB의 유형으로 흡수
+TYPE_ALIASES = {"스택": "자료구조", "큐": "자료구조", "해시": "자료구조", "힙": "자료구조",
+                "최단경로": "그래프", "백트래킹": "완전탐색"}
 
 
 def unquote_git_path(path):
@@ -200,16 +225,38 @@ def parse_path(path):
     week = f"{int(m.group(1))}주차" if m else None
 
     stem = re.sub(r"\.py$", "", filename)
-    bits = stem.split("_", 2)
-    platform = PLATFORM_MAP.get(bits[0].upper(), "기타") if bits else "기타"
-    number = bits[1] if len(bits) > 1 else ""
-    title = bits[2].replace("_", " ") if len(bits) > 2 else stem
+    prefix, _, rest = stem.partition("_")
+    platform = PLATFORM_MAP.get(prefix.upper(), "기타")
+    level = None
+    company = None
+    if platform == "기타":
+        # 접두사를 못 알아보면 파일명 전체를 문제명으로
+        number, title = "", stem.replace("_", " ")
+    else:
+        # 플랫폼 바로 뒤가 기업명이면 기출로 표시 (CT_삼성전자_불안정한회로)
+        head, _, tail = rest.partition("_")
+        if tail and (found := normalize_company(head)):
+            company, rest = found, tail
+        head, _, tail = rest.partition("_")
+        lv = re.fullmatch(r"lv(\d)", head, re.IGNORECASE)
+        if lv and tail:
+            # PGS_Lv2_기능개발  (파일명에 레벨 → 난이도 자동 입력)
+            level = f"Lv{lv.group(1)}"
+            number, title = "", tail.replace("_", " ")
+        elif head.isdigit() and tail:
+            # SWEA_1954_달팽이숫자  /  PGS_42586_기능개발
+            number, title = head, tail.replace("_", " ")
+        else:
+            # PGS_기능개발  /  PGS_전화번호_목록  (번호·레벨 없음)
+            number, title = "", rest.replace("_", " ")
 
     return {
         "주차": week,
         "풀이자": solver,
         "플랫폼": platform,
-        "문제명": f"[{platform}] {number} {title}".strip(),
+        "문제명": " ".join(x for x in (f"[{platform}]", number, title) if x),
+        "레벨": level,
+        "기업": company,
     }
 
 
@@ -230,17 +277,26 @@ def parse_header(path):
     return meta
 
 
-def normalize_difficulty(raw):
-    """'d3', 'Lv3', 'D3' 등을 표준 'D3'로. SWEA D체계로 통일."""
+def normalize_difficulty(raw, platform=None):
+    """플랫폼에 맞는 표준 난이도로 변환.
+    - 프로그래머스: 'lv2', 'Lv 2', 'Level2', '2단계', '2' → 'Lv2'
+    - 그 외(SWEA 등): 'd3', 'D3' → 'D3', D6 이상 → 'D6+' (Lv 표기가 오면 D로 간주)
+    """
     if not raw:
         return None
     s = raw.strip().upper().replace(" ", "")
-    # Lv 표기가 들어오면 D로 매핑 (과거 습관 방어)
-    s = s.replace("LV", "D").replace("LEVEL", "D")
-    if s in VALID_DIFFICULTY:
+    if platform == "코드트리":
+        # 코드트리 난이도(쉬움/보통/어려움)는 DB 난이도 체계에 없어서 기록하지 않음
+        return None
+    if platform == "프로그래머스":
+        m = re.search(r"(\d)", s)
+        if m and f"Lv{m.group(1)}" in PGS_DIFFICULTY:
+            return f"Lv{m.group(1)}"
+        return None
+    s = s.replace("LEVEL", "D").replace("LV", "D")
+    if s in SWEA_DIFFICULTY:
         return s
-    # 'D4+' 같은 변형 흡수
-    if s in {"D6", "D7", "D8", "D9", "D6+", "D7+"}:
+    if re.fullmatch(r"D([6-9])\+?", s):
         return "D6+"
     return None
 
@@ -266,17 +322,27 @@ def build_properties(path, info, meta):
     if link := meta.get("링크"):
         props["문제 링크"] = {"url": link}
 
-    difficulty = normalize_difficulty(meta.get("난이도"))
+    # 주석의 난이도가 우선, 없으면 파일명 레벨(PGS_Lv2_...) 사용
+    difficulty = normalize_difficulty(meta.get("난이도") or info.get("레벨"), info["플랫폼"])
     if difficulty:
         props["난이도"] = {"select": {"name": difficulty}}
 
+    tags = []
     if raw := meta.get("유형"):
-        tags = [t.strip() for t in re.split(r"[,·]|\s", raw) if t.strip()]
+        tags = [t.strip() for t in re.split(r"[,·/]|\s", raw) if t.strip()]
+        tags = [TYPE_ALIASES.get(t, t) for t in tags]
         tags = [t for t in tags if t in VALID_TYPES]
         if "DFS" in raw or "BFS" in raw:
             tags.append("DFS/BFS")
-        if tags:
-            props["유형"] = {"multi_select": [{"name": t} for t in dict.fromkeys(tags)]}
+    # 기업 기출 태그: 파일명의 기업 + 주석 '기출: 삼성전자, LG전자'
+    if info.get("기업"):
+        tags.append(info["기업"])
+    if raw := meta.get("기출"):
+        for t in re.split(r"[,·/]|\s", raw):
+            if t.strip() and (found := normalize_company(t)):
+                tags.append(found)
+    if tags:
+        props["유형"] = {"multi_select": [{"name": t} for t in dict.fromkeys(tags)]}
     if big_o := meta.get("시간복잡도"):
         props["시간복잡도"] = {"rich_text": [{"text": {"content": big_o}}]}
     if retro := meta.get("회고"):
@@ -285,7 +351,7 @@ def build_properties(path, info, meta):
         if digits := re.sub(r"\D", "", spent):
             props["소요 시간(분)"] = {"number": int(digits)}
 
-    # 복습 필요: ① 명시적으로 Y 적었거나  ② 난이도가 D4 이상이면 자동 체크
+    # 복습 필요: ① 명시적으로 Y 적었거나  ② SWEA D4+ / 프로그래머스 Lv3+ 이면 자동 체크
     review_explicit = meta.get("복습필요", "").upper() in {"Y", "YES", "O", "TRUE", "예"}
     review_auto = difficulty in AUTO_REVIEW_DIFFICULTY
     if "복습필요" in meta or review_auto:
