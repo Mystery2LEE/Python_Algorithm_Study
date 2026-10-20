@@ -3,6 +3,7 @@
 
 경로 규칙:  week01/이정현/BOJ_1000_A와B.py
             └주차┘ └풀이자┘ └플랫폼┘└번호┘└문제명┘
+기업 기출: week08/이정현/CT_삼성전자_불안정한회로.py  (플랫폼 뒤에 기업명)
 
 파일 상단 docstring에서 메타데이터를 읽는다. 없으면 비워둔 채로 기록.
 
@@ -170,7 +171,25 @@ def resolve_target():
 PLATFORM_MAP = {
     "SWEA": "SWEA", "PGS": "프로그래머스", "PROGRAMMERS": "프로그래머스",
     "BOJ": "백준", "LC": "LeetCode", "LEETCODE": "LeetCode",
+    "CT": "코드트리", "CODETREE": "코드트리",
 }
+# 기업 기출: 파일명(CT_삼성전자_문제명.py) 또는 주석(기출: 삼성전자)에서 읽어 유형 태그로 기록
+COMPANIES = {"삼성전자", "현대자동차", "LG전자", "SK하이닉스", "카카오", "네이버"}
+COMPANY_ALIASES = {
+    "삼성": "삼성전자", "SAMSUNG": "삼성전자",
+    "현대": "현대자동차", "현대차": "현대자동차", "HYUNDAI": "현대자동차",
+    "LG": "LG전자",
+    "SK": "SK하이닉스", "하이닉스": "SK하이닉스", "HYNIX": "SK하이닉스",
+    "KAKAO": "카카오", "NAVER": "네이버",
+}
+
+
+def normalize_company(raw):
+    """'삼성' / 'samsung' / '삼성전자' → '삼성전자'. 모르는 이름이면 None."""
+    s = raw.strip()
+    if s in COMPANIES:
+        return s
+    return COMPANY_ALIASES.get(s.upper()) or COMPANY_ALIASES.get(s)
 # 난이도: SWEA는 D체계, 프로그래머스는 Lv체계를 그대로 기록한다.
 SWEA_DIFFICULTY = {"D1", "D2", "D3", "D4", "D5", "D6+"}
 PGS_DIFFICULTY = {"Lv0", "Lv1", "Lv2", "Lv3", "Lv4", "Lv5"}
@@ -209,10 +228,15 @@ def parse_path(path):
     prefix, _, rest = stem.partition("_")
     platform = PLATFORM_MAP.get(prefix.upper(), "기타")
     level = None
+    company = None
     if platform == "기타":
         # 접두사를 못 알아보면 파일명 전체를 문제명으로
         number, title = "", stem.replace("_", " ")
     else:
+        # 플랫폼 바로 뒤가 기업명이면 기출로 표시 (CT_삼성전자_불안정한회로)
+        head, _, tail = rest.partition("_")
+        if tail and (found := normalize_company(head)):
+            company, rest = found, tail
         head, _, tail = rest.partition("_")
         lv = re.fullmatch(r"lv(\d)", head, re.IGNORECASE)
         if lv and tail:
@@ -232,6 +256,7 @@ def parse_path(path):
         "플랫폼": platform,
         "문제명": " ".join(x for x in (f"[{platform}]", number, title) if x),
         "레벨": level,
+        "기업": company,
     }
 
 
@@ -260,6 +285,9 @@ def normalize_difficulty(raw, platform=None):
     if not raw:
         return None
     s = raw.strip().upper().replace(" ", "")
+    if platform == "코드트리":
+        # 코드트리 난이도(쉬움/보통/어려움)는 DB 난이도 체계에 없어서 기록하지 않음
+        return None
     if platform == "프로그래머스":
         m = re.search(r"(\d)", s)
         if m and f"Lv{m.group(1)}" in PGS_DIFFICULTY:
@@ -299,14 +327,22 @@ def build_properties(path, info, meta):
     if difficulty:
         props["난이도"] = {"select": {"name": difficulty}}
 
+    tags = []
     if raw := meta.get("유형"):
         tags = [t.strip() for t in re.split(r"[,·/]|\s", raw) if t.strip()]
         tags = [TYPE_ALIASES.get(t, t) for t in tags]
         tags = [t for t in tags if t in VALID_TYPES]
         if "DFS" in raw or "BFS" in raw:
             tags.append("DFS/BFS")
-        if tags:
-            props["유형"] = {"multi_select": [{"name": t} for t in dict.fromkeys(tags)]}
+    # 기업 기출 태그: 파일명의 기업 + 주석 '기출: 삼성전자, LG전자'
+    if info.get("기업"):
+        tags.append(info["기업"])
+    if raw := meta.get("기출"):
+        for t in re.split(r"[,·/]|\s", raw):
+            if t.strip() and (found := normalize_company(t)):
+                tags.append(found)
+    if tags:
+        props["유형"] = {"multi_select": [{"name": t} for t in dict.fromkeys(tags)]}
     if big_o := meta.get("시간복잡도"):
         props["시간복잡도"] = {"rich_text": [{"text": {"content": big_o}}]}
     if retro := meta.get("회고"):
