@@ -25,7 +25,11 @@ def find(D): # 최대 차이 <= D로 길이 K 이상 경로가 있는지 확인
         if dp[r][c] >= K: return True # 길이가 K 이상 경로를 찾으면 트루 리턴
     return False
 
-lo, hi = 0, max(map(max, grid)) # 답의 범위 0 ~ 최대값
+lo, hi = 0, max(map(max, grid)) - min(map(min, grid))
+if not find(hi):
+    print(-1)
+    exit()
+    
 while lo < hi:
     mid = (lo + hi) // 2
     if find(mid): hi = mid
