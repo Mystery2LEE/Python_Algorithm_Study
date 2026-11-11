@@ -94,5 +94,6 @@ def search(mTime : int,mStr : str) -> RESULT_S:
             result[0:5] = result_zone + result_towing[0:5-len(result_zone)]
 
     cnt = 5-result.count('')
+    
     #print(result)
     return RESULT_S(cnt,result)
